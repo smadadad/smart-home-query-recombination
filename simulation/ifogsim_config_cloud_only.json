@@ -1,0 +1,80 @@
+{
+  "nodes": [
+    {
+      "type": "sensor",
+      "name": "ds18b20_sensor",
+      "count": 5,
+      "data_rate": 1000,
+      "protocol": "HTTPS",
+      "latency": 100,
+      "energy_per_reading": 0.01,
+      "cpu_mips": 8
+    },
+    {
+      "type": "cloud",
+      "name": "aws_ec2_t3_micro",
+      "cpu_mips": 2000,
+      "ram": 1024,
+      "storage": 1000000
+    }
+  ],
+  "links": [
+    {
+      "from": "ds18b20_sensor",
+      "to": "aws_ec2_t3_micro",
+      "protocol": "HTTPS",
+      "latency": 100,
+      "bandwidth": 10000
+    }
+  ],
+  "application": {
+    "name": "query_recombination_cloud_only",
+    "modules": [
+      {
+        "name": "sensor_reader",
+        "input": "raw_temp",
+        "output": "temp_data",
+        "mips": 10,
+        "deploy_on": "aws_ec2_t3_micro"
+      },
+      {
+        "name": "query_processor",
+        "input": "temp_data",
+        "output": ["top_k_results"],
+        "mips": 50,
+        "deploy_on": "aws_ec2_t3_micro"
+      }
+    ],
+    "tuples": [
+      {
+        "type": "raw_temp",
+        "size": 8,
+        "period": 10
+      },
+      {
+        "type": "temp_data",
+        "size": 8,
+        "destination": "query_processor"
+      },
+      {
+        "type": "top_k_results",
+        "size": 24,
+        "destination": "local_display"
+      }
+    ],
+    "queries": [
+      {
+        "id": "top_3_rooms",
+        "sensors": ["s1", "s2", "s3", "s4", "s5"],
+        "k": 3,
+        "period": 10
+      },
+      {
+        "id": "top_2_rooms",
+        "sensors": ["s1", "s2", "s3"],
+        "k": 2,
+        "period": 10
+      }
+    ]
+  }
+}

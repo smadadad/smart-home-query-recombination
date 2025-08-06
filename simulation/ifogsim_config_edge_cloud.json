@@ -1,0 +1,137 @@
+{
+  "nodes": [
+    {
+      "type": "sensor",
+      "name": "ds18b20_sensor",
+      "count": 5,
+      "data_rate": 1000,
+      "protocol": "MQTT",
+      "latency": 10,
+      "energy_per_reading": 0.01,
+      "cpu_mips": 8
+    },
+    {
+      "type": "edge",
+      "name": "raspberry_pi_4",
+      "cpu_mips": 1500,
+      "ram": 4096,
+      "storage": 32000,
+      "energy_per_second": 5
+    },
+    {
+      "type": "cloud",
+      "name": "aws_ec2_t3_micro",
+      "cpu_mips": 2000,
+      "ram": 1024,
+      "storage": 1000000
+    }
+  ],
+  "links": [
+    {
+      "from": "ds18b20_sensor",
+      "to": "raspberry_pi_4",
+      "protocol": "MQTT",
+      "latency": 10,
+      "bandwidth": 100000
+    },
+    {
+      "from": "raspberry_pi_4",
+      "to": "aws_ec2_t3_micro",
+      "protocol": "HTTPS",
+      "latency": 100,
+      "bandwidth": 10000
+    },
+    {
+      "from": "ds18b20_sensor",
+      "to": "aws_ec2_t3_micro",
+      "protocol": "HTTPS",
+      "latency": 100,
+      "bandwidth": 10000
+    }
+  ],
+  "application": {
+    "name": "query_recombination_edge_cloud",
+    "modules": [
+      {
+        "name": "sensor_reader",
+        "input": "raw_temp",
+        "output": "temp_data",
+        "mips": 10,
+        "deploy_on": "ds18b20_sensor"
+      },
+      {
+        "name": "query_processor_edge",
+        "input": "temp_data",
+        "output": ["top_k_results_edge", "temp_data_cloud"],
+        "mips": 50,
+        "deploy_on": "raspberry_pi_4"
+      },
+      {
+        "name": "query_processor_cloud",
+        "input": "temp_data_cloud",
+        "output": ["top_k_results_cloud"],
+        "mips": 50,
+        "deploy_on": "aws_ec2_t3_micro"
+      },
+      {
+        "name": "cloud_storage",
+        "input": "agg_data",
+        "output": "stored_data",
+        "mips": 20,
+        "deploy_on": "aws_ec2_t3_micro"
+      }
+    ],
+    "tuples": [
+      {
+        "type": "raw_temp",
+        "size": 8,
+        "period": 10
+      },
+      {
+        "type": "temp_data",
+        "size": 8,
+        "destination": "query_processor_edge"
+      },
+      {
+        "type": "temp_data_cloud",
+        "size": 8,
+        "destination": "query_processor_cloud"
+      },
+      {
+        "type": "top_k_results_edge",
+        "size": 24,
+        "destination": "local_display"
+      },
+      {
+        "type": "top_k_results_cloud",
+        "size": 24,
+        "destination": "local_display"
+      },
+      {
+        "type": "agg_data",
+        "size": 40,
+        "period": 60,
+        "destination": "cloud_storage"
+      },
+      {
+        "type": "stored_data",
+        "size": 40,
+        "destination": "s3_storage"
+      }
+    ],
+    "queries": [
+      {
+        "id": "top_3_rooms",
+        "sensors": ["s1", "s2", "s3", "s4", "s5"],
+        "k": 3,
+        "period": 10
+      },
+      {
+        "id": "top_2_rooms",
+        "sensors": ["s1", "s2", "s3"],
+        "k": 2,
+        "period": 10
+      }
+    ]
+  }
+}
