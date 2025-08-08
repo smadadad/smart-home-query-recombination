@@ -36,26 +36,49 @@ import org.fog.utils.TimeKeeper;
 import org.fog.utils.distribution.DeterministicDistribution;
 
 /**
- * Smart Home IoT Simulation with Query Recombination
- * Based on the paper "Query Recombination: To Process a Large Number of Concurrent Top-k Queries towards IoT Data on an Edge Server"
- * This simulation models two scenarios: a baseline edge processing and an enhanced edge processing with query recombination.
+ * Simulation setup for Smart Home IoT Simulation with Query Recombination
+ * @author Adams Animashaun
+ * Run this class 4 times with different command line arguments to get all scenarios
  */
 public class SmartHomeSim {
 	static List<FogDevice> fogDevices = new ArrayList<FogDevice>();
-	static List<Sensor> sensors = new ArrayList<Sensor>(); // FIXED: Removed nested List<>
+	static List<Sensor> sensors = new ArrayList<Sensor>();
 	static List<Actuator> actuators = new ArrayList<Actuator>();
 	
-	static boolean CLOUD = false; // Set to true for a cloud-only deployment
-	static boolean RECOMBINATION = true; // Set to true to enable query recombination on the edge node
-	
 	static int numOfSensors = 5;
-	static double TEMP_TRANSMISSION_TIME = 10; // Temperature reading every 10 seconds
+	static double TEMP_TRANSMISSION_TIME = 10;
 	
 	public static void main(String[] args) {
+		// Parse command line arguments
+		boolean cloudMode = true;
+		boolean recombinationMode = false;
+		
+		if (args.length >= 2) {
+			cloudMode = Boolean.parseBoolean(args[0]);
+			recombinationMode = Boolean.parseBoolean(args[1]);
+		} else {
+			System.out.println("Usage: java SmartHomeSim <cloudMode> <recombinationMode>");
+			System.out.println("Example: java SmartHomeSim true false");
+			System.out.println("Running with default values: cloudMode=false, recombinationMode=false");
+		}
+		
 		Log.printLine("Starting Smart Home Simulation with Query Recombination...");
+		Log.disable();
+		
+		runSimulation(cloudMode, recombinationMode);
+		Log.printLine("Simulation finished!");
+	}
 
+	private static void runSimulation(boolean cloudMode, boolean recombinationMode) {
 		try {
-			Log.disable();
+			// Print configuration
+			System.out.println("-------------------------------------------------------");
+			System.out.println("Running simulation for: CLOUD=" + cloudMode + ", RECOMBINATION=" + recombinationMode);
+			System.out.println("-------------------------------------------------------");
+
+			String config = (cloudMode ? "cloud-only" : "edge-ward") + (recombinationMode ? "-recombined" : "");
+			System.out.println("Configuration: " + config);
+
 			int num_user = 1;
 			Calendar calendar = Calendar.getInstance();
 			boolean trace_flag = false;
@@ -66,54 +89,38 @@ public class SmartHomeSim {
 			
 			FogBroker broker = new FogBroker("broker");
 			
-			Application application = createApplication(appId, broker.getId());
+			Application application = createApplication(appId, broker.getId(), recombinationMode);
 			application.setUserId(broker.getId());
 			
-			createFogDevices(broker.getId(), appId);
+			createFogDevices(broker.getId(), appId, application, cloudMode);
 			
 			ModuleMapping moduleMapping = ModuleMapping.createModuleMapping();
 			
-			// Debug: Print configuration
-			System.out.println("Configuration: CLOUD=" + CLOUD + ", RECOMBINATION=" + RECOMBINATION);
-			
-			if(CLOUD){
-				// Cloud-based deployment: all processing is done on the cloud.
+			if(cloudMode){
 				moduleMapping.addModuleToDevice("data_collector", "cloud");
 				moduleMapping.addModuleToDevice("query_processor", "cloud");
 				moduleMapping.addModuleToDevice("cloud_storage", "cloud");
-				if(RECOMBINATION){
-					// Even in a cloud-only scenario, we can simulate recombination logic on the cloud
+				if(recombinationMode){
 					moduleMapping.addModuleToDevice("query_recombiner", "cloud");
 				}
 			} else {
-				// Edge-based deployment (default)
 				moduleMapping.addModuleToDevice("data_collector", "raspberry_pi");
-				moduleMapping.addModuleToDevice("query_processor", "raspberry_pi"); // ADDED: Explicit placement
-				if(RECOMBINATION){
-					// Place the recombination engine on the edge for the recombination scenario
+				moduleMapping.addModuleToDevice("query_processor", "raspberry_pi");
+				if(recombinationMode){
 					moduleMapping.addModuleToDevice("query_recombiner", "raspberry_pi");
 				}
-				moduleMapping.addModuleToDevice("cloud_storage", "cloud"); // ADDED: Explicit placement
-			}
-			
-			// Debug: Print module mappings
-			System.out.println("Module Mappings:");
-			for (String module : moduleMapping.getModuleMapping().keySet()) {
-				System.out.println("  " + module + " -> " + moduleMapping.getModuleMapping().get(module));
+				moduleMapping.addModuleToDevice("cloud_storage", "cloud");
 			}
 			
 			Controller controller = new Controller("recomb-controller", fogDevices, sensors, actuators);
 			
-			// Use the appropriate placement policy - ALWAYS use ModulePlacementMapping for guaranteed placement
 			controller.submitApplication(application, 0, 
-					new ModulePlacementMapping(fogDevices, application, moduleMapping));
+					(cloudMode) ? (new ModulePlacementMapping(fogDevices, application, moduleMapping)) 
+					: (new ModulePlacementEdgewards(fogDevices, sensors, actuators, application, moduleMapping)));
 
 			TimeKeeper.getInstance().setSimulationStartTime(Calendar.getInstance().getTimeInMillis());
 
-			// Create the configuration string for the output filename
-			String config = (CLOUD ? "cloud-only" : "edge-ward") + (RECOMBINATION ? "-recombined" : "");
-
-			// --- START OF FILE OUTPUT CODE ---
+			// File output
 			String resultFile = "C:\\Users\\johna\\Downloads\\iFogSim-main\\results\\" + config + "_ifogsim.txt";
 			java.io.File dir = new java.io.File("C:\\Users\\johna\\Downloads\\iFogSim-main\\results\\");
 			if (!dir.exists()) dir.mkdirs();
@@ -142,54 +149,62 @@ public class SmartHomeSim {
 				CloudSim.stopSimulation();
 				
 			} finally {
-				// Reset System.out to its original state after the simulation is done
 				System.setOut(originalOut);
 			}
-			// --- END OF FILE OUTPUT CODE ---
 
-			Log.printLine("Smart Home Simulation finished!");
+			System.out.println("Results written to: " + resultFile);
+			
 		} catch (Exception e) {
 			e.printStackTrace();
-			Log.printLine("Simulation error occurred");
+			System.err.println("Simulation error occurred for scenario: " + 
+				(cloudMode ? "cloud-only" : "edge-ward") + (recombinationMode ? "-recombined" : ""));
 		}
 	}
 
-	/**
-	 * Creates the fog devices in the physical topology
-	 */
-	private static void createFogDevices(int userId, String appId) {
-		// Cloud device at the apex of hierarchy (level 0)
+	private static void createFogDevices(int userId, String appId, Application application, boolean cloudMode) {
 		FogDevice cloud = createFogDevice("cloud", 44800, 40000, 100, 10000, 0, 0.01, 16*103, 16*83.25);
 		cloud.setParentId(-1);
 		fogDevices.add(cloud);
 		
-		// Edge device - Raspberry Pi 4 (level 1)
 		FogDevice raspberryPi = createFogDevice("raspberry_pi", 1500, 4096, 32000, 32000, 1, 0.0, 5.0, 2.0);
 		raspberryPi.setParentId(cloud.getId());
-		raspberryPi.setUplinkLatency(100); // Internet latency to cloud
+		raspberryPi.setUplinkLatency(100);
 		fogDevices.add(raspberryPi);
 		
-		// Create temperature sensors and display actuators
+		// Attach sensors and actuators to appropriate device based on mode
+		int attachId = cloudMode ? cloud.getId() : raspberryPi.getId();
+		
 		for(int i = 0; i < numOfSensors; i++){
-			String sensorId = "temp_sensor_" + i;
-			Sensor tempSensor = new Sensor("s-" + sensorId, "TEMPERATURE", userId, appId, 
-					new DeterministicDistribution(TEMP_TRANSMISSION_TIME));
-			sensors.add(tempSensor);
-			
-			Actuator display = new Actuator("a-display_" + i, userId, appId, "DISPLAY");
-			actuators.add(display);
-			
-			tempSensor.setGatewayDeviceId(raspberryPi.getId());
-			tempSensor.setLatency(2.0); // Local network latency
-			
-			display.setGatewayDeviceId(raspberryPi.getId());
-			display.setLatency(1.0);
+			addSensorAndActuator("sensor_" + i, userId, appId, attachId, application, cloudMode);
 		}
 	}
 	
 	/**
-	 * Creates a fog device with specified parameters
-	 */
+     * Adds a sensor and actuator to the simulation.
+     * @param id The ID suffix for the sensor and actuator.
+     * @param userId The user ID.
+     * @param appId The application ID.
+     * @param gatewayId The gateway device ID.
+     * @param application The application object.
+     * @param cloudMode Whether running in cloud mode.
+     */
+    private static void addSensorAndActuator(String id, int userId, String appId, int gatewayId, Application application, boolean cloudMode) {
+        double sensorLatency = cloudMode ? 100.0 : 2.0; // Higher latency in cloud mode
+        double displayLatency = cloudMode ? 100.0 : 1.0; // Higher latency in cloud mode
+
+        Sensor tempSensor = new Sensor("temp-" + id, "TEMPERATURE", userId, appId, new DeterministicDistribution(TEMP_TRANSMISSION_TIME));
+        sensors.add(tempSensor);
+        tempSensor.setGatewayDeviceId(gatewayId);
+        tempSensor.setLatency(sensorLatency);
+        tempSensor.setApp(application);
+
+        Actuator display = new Actuator("display-" + id, userId, appId, "DISPLAY");
+        actuators.add(display);
+        display.setGatewayDeviceId(gatewayId);
+        display.setLatency(displayLatency);
+        display.setApp(application);
+    }
+	
 	private static FogDevice createFogDevice(String nodeName, long mips, int ram, 
 			long upBw, long downBw, int level, double ratePerMips, double busyPower, double idlePower) {
 		
@@ -198,12 +213,12 @@ public class SmartHomeSim {
 
 		int hostId = FogUtils.generateEntityId();
 		long storage = 1000000;
-		long bw = 10000; // Changed to long to match upBw/downBw
+		long bw = 10000;
 
 		PowerHost host = new PowerHost(
 				hostId,
 				new RamProvisionerSimple(ram),
-				new BwProvisionerOverbooking((long)bw), // Cast to long
+				new BwProvisionerOverbooking(bw),
 				storage,
 				peList,
 				new StreamOperatorScheduler(peList),
@@ -238,75 +253,55 @@ public class SmartHomeSim {
 		return fogdevice;
 	}
 
-	/**
-	 * Creates the Smart Home application using the DDF model.
-	 * This method is modified to include a query_recombiner module
-	 * to simulate the paper's core concept.
-	 */
 	@SuppressWarnings({"serial"})
-	private static Application createApplication(String appId, int userId){
+	private static Application createApplication(String appId, int userId, boolean recombinationMode){
 		
 		Application application = Application.createApplication(appId, userId);
 		
-		/*
-		 * Adding application modules
-		 */
-		application.addAppModule("data_collector", 10); // Module to collect raw sensor data
-		application.addAppModule("query_processor", 50); // Module to process a single top-k query
-		application.addAppModule("cloud_storage", 20); // Data storage module (simulates S3)
-		if (RECOMBINATION) {
-			application.addAppModule("query_recombiner", 30); // NEW: Module to combine multiple queries into one
+		application.addAppModule("data_collector", 10);
+		application.addAppModule("query_processor", 50);
+		application.addAppModule("cloud_storage", 20);
+		if (recombinationMode) {
+			application.addAppModule("query_recombiner", 30);
 		}
 		
-		/*
-		 * Adding edges between modules
-		 */
-		// Sensor to data_collector
-		application.addAppEdge("TEMPERATURE", "data_collector", 1000, 8, "raw_temp", Tuple.UP, AppEdge.SENSOR);
+		// Connecting the application modules with edges
+		application.addAppEdge("TEMPERATURE", "data_collector", 1000, 500, "TEMPERATURE", Tuple.UP, AppEdge.SENSOR);
 		
-		// If recombination is enabled, data goes to the recombiner first
-		if (RECOMBINATION) {
-			application.addAppEdge("data_collector", "query_recombiner", 1000, 8, "top_k_query_request", Tuple.UP, AppEdge.MODULE);
-			application.addAppEdge("query_recombiner", "query_processor", 100, 8, "recombined_query", Tuple.UP, AppEdge.MODULE);
+		if (recombinationMode) {
+			application.addAppEdge("data_collector", "query_recombiner", 1000, 500, "RAW_DATA", Tuple.UP, AppEdge.MODULE);
+			application.addAppEdge("query_recombiner", "query_processor", 100, 500, "RECOMBINED_DATA", Tuple.UP, AppEdge.MODULE);
+			application.addAppEdge("query_processor", "cloud_storage", 60000, 500, "STORAGE_DATA", Tuple.UP, AppEdge.MODULE);
+			application.addAppEdge("query_processor", "data_collector", 100, 28, 1000, "PROCESSED_DATA", Tuple.DOWN, AppEdge.MODULE);
+			application.addAppEdge("data_collector", "DISPLAY", 1000, 500, "DISPLAY_UPDATE", Tuple.DOWN, AppEdge.ACTUATOR);
 		} else {
-			// Without recombination, each query is a separate tuple from the data collector to the processor
-			application.addAppEdge("data_collector", "query_processor", 1000, 8, "top_k_query_request", Tuple.UP, AppEdge.MODULE);
+			application.addAppEdge("data_collector", "query_processor", 1000, 500, "RAW_DATA", Tuple.UP, AppEdge.MODULE);
+			application.addAppEdge("query_processor", "cloud_storage", 60000, 500, "STORAGE_DATA", Tuple.UP, AppEdge.MODULE);
+			application.addAppEdge("query_processor", "data_collector", 100, 28, 1000, "PROCESSED_DATA", Tuple.DOWN, AppEdge.MODULE);
+			application.addAppEdge("data_collector", "DISPLAY", 1000, 500, "DISPLAY_UPDATE", Tuple.DOWN, AppEdge.ACTUATOR);
 		}
 		
-		// query_processor processing and results
-		application.addAppEdge("query_processor", "data_collector", 100, 24, "top_k_results", Tuple.DOWN, AppEdge.MODULE);
+		// Defining the input-output relationships of modules
+		application.addTupleMapping("data_collector", "TEMPERATURE", "RAW_DATA", new FractionalSelectivity(1.0));
 		
-		// Results to display
-		application.addAppEdge("data_collector", "DISPLAY", 1000, 24, "display_results", Tuple.DOWN, AppEdge.ACTUATOR);
-		
-		// Periodic data aggregation to cloud storage
-		application.addAppEdge("query_processor", "cloud_storage", 60000, 40, "aggregated_data", Tuple.UP, AppEdge.MODULE);
-		
-		/*
-		 * Defining selectivity relationships for the application modules
-		 */
-		application.addTupleMapping("data_collector", "raw_temp", "top_k_query_request", new FractionalSelectivity(1.0));
-		
-		if (RECOMBINATION) {
-			// When recombination is active, the query processor receives a recombined query
-			application.addTupleMapping("query_processor", "recombined_query", "top_k_results", new FractionalSelectivity(1.0));
-			application.addTupleMapping("query_processor", "recombined_query", "aggregated_data", new FractionalSelectivity(0.1));
-			application.addTupleMapping("query_recombiner", "top_k_query_request", "recombined_query", new FractionalSelectivity(0.2));
+		if (recombinationMode) {
+			application.addTupleMapping("query_recombiner", "RAW_DATA", "RECOMBINED_DATA", new FractionalSelectivity(0.8));
+			application.addTupleMapping("query_processor", "RECOMBINED_DATA", "PROCESSED_DATA", new FractionalSelectivity(1.0));
+			application.addTupleMapping("query_processor", "RECOMBINED_DATA", "STORAGE_DATA", new FractionalSelectivity(0.1));
+			application.addTupleMapping("data_collector", "PROCESSED_DATA", "DISPLAY_UPDATE", new FractionalSelectivity(1.0));
 		} else {
-			// Without recombination, the query processor receives a standard query
-			application.addTupleMapping("query_processor", "top_k_query_request", "top_k_results", new FractionalSelectivity(1.0));
-			application.addTupleMapping("query_processor", "top_k_query_request", "aggregated_data", new FractionalSelectivity(0.1));
+			application.addTupleMapping("query_processor", "RAW_DATA", "PROCESSED_DATA", new FractionalSelectivity(1.0));
+			application.addTupleMapping("query_processor", "RAW_DATA", "STORAGE_DATA", new FractionalSelectivity(0.1));
+			application.addTupleMapping("data_collector", "PROCESSED_DATA", "DISPLAY_UPDATE", new FractionalSelectivity(1.0));
 		}
 		
-		application.addTupleMapping("data_collector", "top_k_results", "display_results", new FractionalSelectivity(1.0));
-		
-		/*
-		 * Defining application loops for latency monitoring
-		 */
+		// Defining application loops to monitor latency
 		final AppLoop loop1 = new AppLoop(new ArrayList<String>(){{
 			add("TEMPERATURE");
 			add("data_collector");
-			if (RECOMBINATION) add("query_recombiner");
+			if (recombinationMode) {
+				add("query_recombiner");
+			}
 			add("query_processor");
 			add("data_collector");
 			add("DISPLAY");
