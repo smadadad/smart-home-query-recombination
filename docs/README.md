@@ -119,12 +119,6 @@ The simulation supports four configurations based on `cloudMode` (true for cloud
 - **Recombination Impact**: `recombinationMode` adds `query_recombiner`, potentially increasing latency (~10-20 ms) but optimizing query processing.
 - **Limitations**: Null loop delays indicate incomplete actuator integration.
 
-## Latest Changes
-- **Argument Structure**: Updated to use `cloudMode` (true/false) and `recombinationMode` (true/false) as command-line arguments.
-- **Module Updates**: Renamed modules to `data_collector`, `query_processor`, `query_recombiner`, and `cloud_storage`.
-- **File Output**: Results are written to `C:\\Users\\johna\\Downloads\\iFogSim-main\\results\\{config}_ifogsim.txt` with console duplication.
-- **Error Handling**: Added try-with-resources for file output and exception handling.
-
 ## Troubleshooting
 - **iFogSim Errors**:
   - Verify Java 8: `java -version`.
